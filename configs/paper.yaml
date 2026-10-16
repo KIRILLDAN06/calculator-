@@ -1,0 +1,38 @@
+# Paper trading: simulated orders only. Live trading is disabled and the paper
+# trader refuses to start with any live setting.
+mode: paper
+symbol: BTC/USD
+capital:
+  initial_equity: 10000.0
+costs:
+  taker_fee: 0.0038
+  maker_fee: 0.0022
+  slippage_bps: 5.0
+  short_open_fee: 0.0002
+  short_rollover_per_4h: 0.0002
+risk:
+  risk_per_trade: 0.0025
+  max_leverage: 1.0
+  max_open_positions: 1
+  max_daily_loss: 0.02
+  max_drawdown: 0.10
+  drawdown_halt: true
+  max_trades_per_day: 3
+  max_consecutive_losses: 4
+  cooldown_bars_after_loss_streak: 96
+  max_data_staleness_s: 180
+  max_slippage_bps: 50
+  allow_short: true
+strategy:
+  name: donchian_trend
+  params: {}
+paper:
+  state_file: state/paper_state.json
+  exchange_state_file: state/paper_exchange.json
+  alerts_file: logs/alerts.jsonl
+  log_file: logs/paper.log
+  kill_file: state/EMERGENCY_STOP
+  feed: replay              # replay | kraken  (kraken requires network access to api.kraken.com)
+  poll_seconds: 30
+live_trading:
+  enabled: false

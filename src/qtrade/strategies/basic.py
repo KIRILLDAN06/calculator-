@@ -46,6 +46,11 @@ class RandomEntry(Strategy):
         "max_hold": 48,
         "allow_short": True,
         "timeframe": None,  # informational: control runs on the tested strategy's bars
+        # Optional NY-session confinement (matches session strategies): entries only on
+        # weekday bars inside [ny_start, ny_end); positions exit at ny_close.
+        "ny_start": None,
+        "ny_end": None,
+        "ny_close": None,
     }
 
     @property
@@ -60,6 +65,12 @@ class RandomEntry(Strategy):
         a = F.atr(bars, int(p["atr_n"])).to_numpy()
         close = bars["close"].to_numpy()
         go = (draws[:, 0] < float(p["prob"])) & np.isfinite(a) & (a > 0)
+        session = p["ny_start"] is not None
+        if session:
+            local = F.local_time(bars.index)
+            mod = F.minutes_of_day(local)
+            wd = local.dayofweek.to_numpy()
+            go &= (mod >= F.parse_hhmm(p["ny_start"])) & (mod < F.parse_hhmm(p["ny_end"])) & (wd < 5)
         direction = np.where(draws[:, 1] < 0.5, 1, -1) if p["allow_short"] else np.ones(len(bars), int)
         entry = np.where(go, direction, 0).astype(np.int8)
         risk = float(p["stop_atr"]) * a
@@ -69,6 +80,9 @@ class RandomEntry(Strategy):
         sig["stop"] = stop
         sig["target"] = target
         sig["max_hold"] = np.where(entry != 0, float(p["max_hold"]), np.nan)
+        if session and p["ny_close"] is not None:
+            tf = max(1, int(np.median(np.diff(F.epoch_ns(bars.index))) // 60_000_000_000)) if len(bars) > 1 else 1
+            sig["exit"] = ((mod + tf) == F.parse_hhmm(p["ny_close"])) & (wd < 5)
         return sig
 
 

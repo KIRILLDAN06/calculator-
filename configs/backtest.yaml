@@ -1,0 +1,33 @@
+# Baseline research backtest configuration. All values are documented in
+# research/backtest_methodology.md. Live trading is impossible from this config.
+mode: backtest
+symbol: BTC/USD
+data:
+  clean_dir: data/clean
+capital:
+  initial_equity: 10000.0
+costs:
+  taker_fee: 0.0038        # Kraken Pro tier 3 ($10K+ 30d volume), schedule effective 2026-07-09
+  maker_fee: 0.0022
+  slippage_bps: 5.0
+  short_open_fee: 0.0002
+  short_rollover_per_4h: 0.0002
+risk:
+  risk_per_trade: 0.005
+  max_leverage: 1.0
+  max_open_positions: 1
+  max_daily_loss: 0.03
+  max_drawdown: 0.20
+  drawdown_halt: false      # research runs report drawdown instead of halting (see methodology)
+  max_trades_per_day: 4
+  max_consecutive_losses: 1000   # loss-streak cooldown disabled for research comparability
+  cooldown_bars_after_loss_streak: 0
+  allow_short: true
+strategy:
+  name: orb
+  params: {}
+backtest:
+  start: "2017-01-01"
+  end: "2022-01-01"
+live_trading:
+  enabled: false

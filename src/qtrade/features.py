@@ -67,6 +67,14 @@ def rolling_low(x: pd.Series, n: int) -> pd.Series:
     return x.rolling(n, min_periods=n).min()
 
 
+def epoch_ns(index: pd.DatetimeIndex) -> np.ndarray:
+    """Integer nanoseconds since the epoch, independent of the index's storage unit.
+
+    pandas >= 2 may store timestamps in s/ms/us; raw ``asi8`` is in that unit.
+    """
+    return index.as_unit("ns").asi8
+
+
 def local_time(index: pd.DatetimeIndex, tz: str = NY_TZ) -> pd.DatetimeIndex:
     return index.tz_convert(tz)
 

@@ -29,12 +29,13 @@ DEFAULTS: dict[str, Any] = {
     },
     "capital": {"initial_equity": 10_000.0, "quote_ccy": "USD"},
     "costs": {
-        # Kraken Pro spot, lowest-volume tier (verify against research/data_sources.md).
-        "taker_fee": 0.0040,
-        "maker_fee": 0.0025,
+        # Kraken Pro spot, tier 3 ($10K+ 30-day volume) of the schedule effective
+        # 2026-07-09 (see research/data_sources.md). Tier 1 is 0.40%/0.80%.
+        "taker_fee": 0.0038,
+        "maker_fee": 0.0022,
         # Adverse price move applied to every market/stop fill, per side.
         "slippage_bps": 5.0,
-        # Margin financing for shorts (Kraken margin: open fee + rollover per 4h).
+        # Margin financing for shorts (Kraken margin: "up to" 0.02% open + 0.02% per 4h).
         "short_open_fee": 0.0002,
         "short_rollover_per_4h": 0.0002,
     },
@@ -51,6 +52,7 @@ DEFAULTS: dict[str, Any] = {
         "max_open_positions": 1,
         "max_daily_loss": 0.02,
         "max_drawdown": 0.20,
+        "drawdown_halt": True,  # kill switch: flatten + halt when max_drawdown breached
         "max_trades_per_day": 4,
         "max_consecutive_losses": 5,
         "cooldown_bars_after_loss_streak": 96,
@@ -65,8 +67,11 @@ DEFAULTS: dict[str, Any] = {
     "live_trading": {"enabled": False},
     "paper": {
         "state_file": "state/paper_state.json",
+        "exchange_state_file": "state/paper_exchange.json",
         "log_file": "logs/paper.log",
-        "alerts_file": "logs/alerts.log",
+        "alerts_file": "logs/alerts.jsonl",
+        "kill_file": "state/EMERGENCY_STOP",
+        "feed": "replay",
         "poll_seconds": 30,
     },
 }

@@ -118,7 +118,7 @@ def validate_minutes(raw: pd.DataFrame, extreme_move: float = 0.15) -> tuple[pd.
     if len(df):
         rep.first_ts = df.index[0].isoformat()
         rep.last_ts = df.index[-1].isoformat()
-        step = np.diff(df.index.asi8) // 60_000_000_000
+        step = np.diff(df.index.as_unit("ns").asi8) // 60_000_000_000
         gaps = step[step > 1] - 1
         rep.gap_count = int(gaps.size)
         rep.missing_minutes = int(gaps.sum())
