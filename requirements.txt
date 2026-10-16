@@ -1,0 +1,9 @@
+# Pinned versions used to produce the reported results (Python 3.13.16)
+numpy==2.5.3
+pandas==3.0.5
+pyarrow==26.0.0
+PyYAML==6.0.1
+requests==2.34.2
+scipy==1.18.1
+pytest==9.1.1
+ruff==0.16.8

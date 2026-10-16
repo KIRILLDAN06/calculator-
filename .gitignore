@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+# Market data is downloaded, never committed (size + licensing); see research/data_sources.md
+data/raw/
+data/clean/
+# Runtime state / logs / generated run outputs
+runs/
+state/
+logs/
+.env
+*.key
+secrets*
