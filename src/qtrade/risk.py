@@ -14,7 +14,7 @@ min_order_qty               order rejected if size rounds below minimum
 max_open_positions          new entry rejected
 max_trades_per_day          new entry rejected until next UTC day
 max_daily_loss              (equity incl. unrealised) -> no new entries until next UTC day
-max_drawdown                kill switch: flatten + permanent halt (manual reset)
+max_drawdown                kill switch: flatten (retried until flat) + permanent halt
 max_consecutive_losses      cooldown: no entries for N bars
 max_data_staleness_s        stale market data -> entry rejected
 max_spread_bps              entry rejected when quoted spread too wide
@@ -32,6 +32,13 @@ from typing import Any
 
 import pandas as pd
 
+NS_PER_DAY = 86_400_000_000_000
+
+
+def utc_day(ts: pd.Timestamp) -> int:
+    """UTC day number (``Timestamp.value`` is always nanoseconds)."""
+    return int(ts.value // NS_PER_DAY)
+
 
 @dataclass
 class Decision:
@@ -42,7 +49,7 @@ class Decision:
 
 @dataclass
 class RiskState:
-    day: str | int | None = None
+    day: int | None = None
     day_start_equity: float = 0.0
     peak_equity: float = 0.0
     trades_today: int = 0
@@ -51,6 +58,7 @@ class RiskState:
     day_halted: bool = False
     halted: bool = False
     halt_reason: str = ""
+    flatten_required: bool = False  # kill switch / emergency stop: keep flattening until flat
     events: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -67,43 +75,54 @@ class RiskManager:
     def _event(self, ts: pd.Timestamp, kind: str, detail: str) -> None:
         self.state.events.append({"ts": ts.isoformat(), "kind": kind, "detail": detail})
 
-    def halt(self, ts: pd.Timestamp, reason: str) -> None:
+    def halt(self, ts: pd.Timestamp, reason: str, flatten: bool = False) -> None:
+        """Stop opening positions (permanent until manual reset).
+
+        ``flatten=True`` additionally requires the caller to flatten; the requirement persists
+        (and ``on_bar`` keeps returning ``"flatten"``) until it is cleared manually, so a failed
+        flattening order is retried rather than forgotten.
+        """
         if not self.state.halted:
             self.state.halted = True
             self.state.halt_reason = reason
             self._event(ts, "HALT", reason)
+        if flatten and not self.state.flatten_required:
+            self.state.flatten_required = True
+            self._event(ts, "FLATTEN", reason)
 
     def emergency_stop(self, ts: pd.Timestamp, reason: str = "emergency stop") -> None:
-        self.halt(ts, reason)
+        self.halt(ts, reason, flatten=True)
 
-    def on_bar(self, ts: pd.Timestamp, equity: float, day_key: str | int | None = None) -> list[str]:
-        """Update day/peak bookkeeping with mark-to-market equity at a bar close.
-
-        ``day_key`` identifies the UTC day (computed from ``ts`` when omitted).
-        Returns actions for the caller: ``"flatten"`` when the kill switch fires.
-        """
-        actions: list[str] = []
+    def start_day(self, day: int, equity: float) -> None:
+        """Roll the UTC day *before* any fill of its first bar (equity = previous close)."""
         st = self.state
-        day = ts.strftime("%Y-%m-%d") if day_key is None else day_key
         if day != st.day:
             st.day = day
             st.day_start_equity = equity
             st.trades_today = 0
             st.day_halted = False
+
+    def on_bar(self, ts: pd.Timestamp, equity: float, day_key: int | None = None) -> list[str]:
+        """Update peak/daily-loss bookkeeping with mark-to-market equity at a bar close.
+
+        ``day_key`` is the bar's UTC day number (computed from ``ts`` when omitted; callers
+        should already have called :meth:`start_day` at the bar's open). Returns
+        ``["flatten"]`` for as long as a kill switch or emergency stop requires flattening.
+        """
+        st = self.state
+        self.start_day(utc_day(ts) if day_key is None else day_key, equity)
         st.peak_equity = max(st.peak_equity, equity)
         dd = 1.0 - equity / st.peak_equity if st.peak_equity > 0 else 0.0
-        if dd >= float(self.cfg["max_drawdown"]) and self.drawdown_halt and not st.halted:
-            self.halt(ts, f"max drawdown {dd:.2%} >= {float(self.cfg['max_drawdown']):.2%}")
-            actions.append("flatten")
+        if dd >= float(self.cfg["max_drawdown"]) and self.drawdown_halt and not st.flatten_required:
+            self.halt(ts, f"max drawdown {dd:.2%} >= {float(self.cfg['max_drawdown']):.2%}", flatten=True)
         if st.day_start_equity > 0 and not st.day_halted:
             day_loss = 1.0 - equity / st.day_start_equity
             if day_loss >= float(self.cfg["max_daily_loss"]):
                 st.day_halted = True
                 self._event(ts, "DAY_HALT", f"daily loss {day_loss:.2%}")
-        if equity <= 0 and not st.halted:
-            self.halt(ts, "equity <= 0")
-            actions.append("flatten")
-        return actions
+        if equity <= 0 and not st.flatten_required:
+            self.halt(ts, "equity <= 0", flatten=True)
+        return ["flatten"] if st.flatten_required else []
 
     def on_trade_closed(self, ts: pd.Timestamp, net_pnl: float) -> None:
         st = self.state
@@ -140,9 +159,11 @@ class RiskManager:
     ) -> Decision:
         """Approve and size a new entry, or reject it with a reason. Pure w.r.t. state."""
         c, st = self.cfg, self.state
+        # Limits apply to the UTC day in which the order would fill (ts = fill time).
+        same_day = utc_day(ts) == st.day
         if st.halted:
             return Decision(False, reason=f"halted: {st.halt_reason}")
-        if st.day_halted:
+        if st.day_halted and same_day:
             return Decision(False, reason="daily loss limit reached")
         if st.cooldown_until is not None and ts < pd.Timestamp(st.cooldown_until):
             return Decision(False, reason="loss-streak cooldown")
@@ -152,7 +173,7 @@ class RiskManager:
             return Decision(False, reason="shorting disabled")
         if open_positions >= int(c["max_open_positions"]):
             return Decision(False, reason="max open positions")
-        if st.trades_today >= int(c["max_trades_per_day"]):
+        if same_day and st.trades_today >= int(c["max_trades_per_day"]):
             return Decision(False, reason="max trades per day")
         if data_age_s > float(c["max_data_staleness_s"]):
             return Decision(False, reason=f"stale data ({data_age_s:.0f}s)")

@@ -6,9 +6,10 @@ trading on replayed data can be checked trade-for-trade against a backtest:
 * market orders fill at the next processed bar's open +/- slippage (taker);
 * limit orders fill at their price only when the bar trades *through* it (maker);
 * stop orders fill at min(open, stop) (sells) / max(open, stop) (buys) +/- slippage;
-* entry orders may carry a bracket (``meta['stop']``/``meta['target']``): on fill,
-  reduce-only stop and target child orders are created and evaluated on the same
-  bar -- stop first; the target is skipped on the bar a *limit* entry fills;
+* entry orders may carry a bracket (``meta['stop']``/``meta['target']``): on every
+  (partial) fill, reduce-only stop and target child orders are created/resized to the
+  filled quantity and evaluated on the same bar -- stop first; the target is skipped
+  on the bar a *limit* entry fills; a triggered child cancels the entry's remainder;
 * shorts pay the margin opening fee and pro-rata rollover each bar.
 
 Fault injection (all seeded, default off): request timeouts (order may or may
@@ -174,19 +175,31 @@ class SimulatedExchange:
                 return part
         return o.remaining
 
-    def _spawn_bracket(self, parent: Order) -> None:
-        stop, target = parent.meta.get("stop"), parent.meta.get("target")
+    def _sync_bracket(self, parent: Order) -> None:
+        """Create or resize the reduce-only stop/target children to the entry's filled quantity.
+
+        Called after *every* entry fill, so a partially filled entry is protected immediately.
+        """
         side = -parent.side
-        if stop is not None and math.isfinite(stop):
-            self._store(Order(client_id=f"{parent.client_id}-SL", side=side, qty=parent.filled_qty,
-                              order_type="stop", price=float(stop), reduce_only=True, tag="stop",
-                              status=OrderStatus.OPEN, created_ts=self.last_bar_ts,
-                              meta={"parent": parent.client_id, "oco": f"{parent.client_id}-TP"}))
-        if target is not None and math.isfinite(target):
-            self._store(Order(client_id=f"{parent.client_id}-TP", side=side, qty=parent.filled_qty,
-                              order_type="limit", price=float(target), reduce_only=True, tag="target",
-                              status=OrderStatus.OPEN, created_ts=self.last_bar_ts,
-                              meta={"parent": parent.client_id, "oco": f"{parent.client_id}-SL"}))
+        for suffix, typ, key, tag, oco in (("-SL", "stop", "stop", "stop", "-TP"),
+                                           ("-TP", "limit", "target", "target", "-SL")):
+            price = parent.meta.get(key)
+            if price is None or not math.isfinite(price):
+                continue
+            cid = parent.client_id + suffix
+            child = self.orders.get(cid)
+            if child is None:
+                self._store(Order(client_id=cid, side=side, qty=parent.filled_qty, order_type=typ,
+                                  price=float(price), reduce_only=True, tag=tag, status=OrderStatus.OPEN,
+                                  created_ts=self.last_bar_ts,
+                                  meta={"parent": parent.client_id, "oco": parent.client_id + oco}))
+            elif child.status not in TERMINAL:
+                child.qty = parent.filled_qty
+
+    def _cancel_parent_remainder(self, child: Order) -> None:
+        parent = self.orders.get(child.meta.get("parent", ""))
+        if parent is not None and parent.status not in TERMINAL:
+            parent.status = OrderStatus.CANCELED  # never keep adding to a stopped-out position
 
     def process_bar(self, ts: pd.Timestamp, o: float, h: float, lo: float, c: float) -> list[Fill]:
         """Advance the exchange by one completed bar; returns fills generated."""
@@ -204,8 +217,8 @@ class SimulatedExchange:
                 od.status = OrderStatus.CANCELED
                 continue
             self._fill(od, ts_iso, self._fill_qty(od), o * (1 + od.side * slip), "taker", o)
-            if od.status == OrderStatus.FILLED and od.tag == "entry":
-                self._spawn_bracket(od)
+            if od.tag == "entry":
+                self._sync_bracket(od)
 
         # 2. resting entry limits (expiry first)
         for cid in list(self.order_seq):
@@ -214,13 +227,11 @@ class SimulatedExchange:
                 continue
             if od.expire_ts is not None and ts >= pd.Timestamp(od.expire_ts):
                 od.status = OrderStatus.EXPIRED
-                if od.tag == "entry" and od.filled_qty > 0:
-                    self._spawn_bracket(od)  # protect a partially filled entry
                 continue
             if (od.side == 1 and lo < od.price) or (od.side == -1 and h > od.price):
                 self._fill(od, ts_iso, self._fill_qty(od), float(od.price), "maker", float(od.price))
-                if od.status == OrderStatus.FILLED and od.tag == "entry":
-                    self._spawn_bracket(od)
+                if od.tag == "entry":
+                    self._sync_bracket(od)
                     limit_filled_now.add(od.client_id)
 
         # 3. protective stops, then targets (stop first if both are touched)
@@ -241,6 +252,7 @@ class SimulatedExchange:
             else:
                 continue
             stopped.add(cid)
+            self._cancel_parent_remainder(od)
             oco = od.meta.get("oco")
             if oco and oco in self.orders and self.orders[oco].status not in TERMINAL:
                 self.orders[oco].status = OrderStatus.CANCELED
@@ -255,6 +267,7 @@ class SimulatedExchange:
                 continue  # order of events inside the fill bar is unknowable
             if (od.side == -1 and h > od.price) or (od.side == 1 and lo < od.price):
                 self._fill(od, ts_iso, od.remaining, float(od.price), "maker", float(od.price))
+                self._cancel_parent_remainder(od)
                 oco = od.meta.get("oco")
                 if oco and oco in self.orders and self.orders[oco].status not in TERMINAL:
                     self.orders[oco].status = OrderStatus.CANCELED

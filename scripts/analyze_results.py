@@ -59,6 +59,7 @@ def stage_table(stage: str) -> list[str]:
 def breakeven_table() -> list[str]:
     lines = ["| Cand. | Period | Trades (zero cost) | Gross expectancy per trade (bp of notional) | "
              "95% CI (bp) | Modelled baseline round trip (bp) |", "|---|---|---|---|---|---|"]
+    rt = {"C5": "~44-65 (maker entry; maker/taker exit)", "C2": "~70-86 (maker target / taker stop exits)"}
     for cand in CANDIDATES:
         for stage in ("dev", "val", "test"):
             if not (EXP / stage / "summary.json").exists():
@@ -71,7 +72,7 @@ def breakeven_table() -> list[str]:
             bp = (t["gross_pnl"] / (t["qty"] * t["entry_ref"]) * 1e4).to_numpy()
             se = bp.std(ddof=1) / math.sqrt(len(bp)) if len(bp) > 1 else float("nan")
             lines.append(f"| {cand.cid} | {stage} | {len(bp)} | {bp.mean():.1f} | "
-                         f"[{bp.mean() - 1.96 * se:.1f}, {bp.mean() + 1.96 * se:.1f}] | ~86 (taker) |")
+                         f"[{bp.mean() - 1.96 * se:.1f}, {bp.mean() + 1.96 * se:.1f}] | {rt.get(cand.cid, '~86 (taker)')} |")
     return lines
 
 
@@ -123,12 +124,15 @@ def test_criteria_table() -> list[str]:
         return ["_test stage not run_"]
     d = json.loads(p.read_text())
     keys = list(next(iter(d["candidates"].values()))["criteria"])
-    lines = ["| Cand. | " + " | ".join(k.split("_", 1)[1] for k in keys) + " | DSR | Control pct. | Verdict |",
-             "|---" * (len(keys) + 4) + "|"]
+    lines = ["| Cand. | " + " | ".join(k.split("_", 1)[1] for k in keys)
+             + " | DSR | DSR (null var., suppl.) | Control pct. | Trade-matched control pct. (suppl.) | Verdict |",
+             "|---" * (len(keys) + 6) + "|"]
     for cid, c in d["candidates"].items():
         marks = " | ".join("✅" if c["criteria"][k] else "❌" for k in keys)
-        lines.append(f"| {cid} | {marks} | {fmt(c['dsr']['dsr'])} | {fmt(c['control']['percentile_of_candidate'], True)} | "
-                     f"**{c['verdict']}** |")
+        dn = c.get("dsr_null_variance", {}).get("dsr")
+        ct = c.get("control_trade_matched", {}).get("percentile_of_candidate")
+        lines.append(f"| {cid} | {marks} | {fmt(c['dsr']['dsr'])} | {fmt(dn)} | "
+                     f"{fmt(c['control']['percentile_of_candidate'], True)} | {fmt(ct, True)} | **{c['verdict']}** |")
     return lines
 
 

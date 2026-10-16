@@ -84,6 +84,7 @@ def test_drawdown_kill_switch_flattens_and_is_permanent():
     assert r.on_bar(T0, 10_000) == []
     r.on_bar(T0 + pd.Timedelta(hours=1), 11_000)
     assert r.on_bar(T0 + pd.Timedelta(hours=2), 9_850) == ["flatten"]   # -10.45% from peak
+    assert r.on_bar(T0 + pd.Timedelta(hours=3), 9_900) == ["flatten"]   # keeps requiring flat
     assert r.state.halted
     r.on_bar(T0 + pd.Timedelta(days=3), 12_000)
     assert "halted" in check(r).reason                 # stays halted until manual reset
@@ -116,12 +117,14 @@ def test_trades_per_day_and_slippage_halt_and_emergency_stop():
     r.on_entry_filled()
     r.on_entry_filled()
     assert "trades per day" in check(r).reason
+    assert check(r, ts=T0 + pd.Timedelta(days=1)).approved   # fill on the next UTC day: new quota
     r2 = rm(max_slippage_bps=20)
     r2.on_fill(T0, 35.0)
     assert r2.state.halted and "slippage" in r2.state.halt_reason
     r3 = rm()
     r3.emergency_stop(T0, "operator")
     assert "operator" in check(r3).reason
+    assert r3.on_bar(T0, 10_000) == ["flatten"] and r3.on_bar(T0 + pd.Timedelta(hours=1), 10_000) == ["flatten"]
 
 
 def test_risk_state_persistence_roundtrip():

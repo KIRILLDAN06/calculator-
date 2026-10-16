@@ -192,3 +192,86 @@ def test_limit_entry_bracket_and_session_exit_match_backtest(pcfg, tmp_path, var
     assert pd.Timestamp(pt.exit_time.iloc[0]) == bt.exit_time.iloc[0]
     assert pt.entry_price.iloc[0] == pytest.approx(103.2)
     assert pt.net_pnl.iloc[0] == pytest.approx(bt.net_pnl.iloc[0], abs=1e-6)
+
+
+# ------------------------------------------------- audit regressions (2026-10-16)
+class _LimitProbe:
+    """Strategy stub: a far-away limit entry on every bar (never fills)."""
+
+    name = "limit_probe"
+    timeframe = "1h"
+
+    def generate(self, bars):
+        from qtrade.strategies.base import empty_signals
+
+        sig = empty_signals(bars.index)
+        sig["entry"] = 1
+        sig["limit_price"] = (bars["close"] * 0.5).round(1)
+        sig["stop"] = bars["close"] * 0.4
+        sig["expiry_bars"] = 500
+        return sig
+
+
+def _open_position(tr, bars, start_i=1100):
+    i = start_i
+    tr.run_replay(_start(bars), bars.index[i])
+    while tr.state["position"] is None and i < len(bars) - 10:
+        tr.step(bars.index[i] + pd.Timedelta(hours=1, seconds=5))
+        i += 1
+    assert tr.state["position"] is not None
+    return i
+
+
+def test_emergency_stop_flattens_even_when_already_halted(pcfg, bars, tmp_path):
+    kill = tmp_path / "STOP"
+    tr = _trader(pcfg, bars, tmp_path, kill_file=kill)
+    i = _open_position(tr, bars)
+    tr.risk.halt(bars.index[i], "slippage halt (no flatten)")
+    kill.write_text("stop")
+    for j in range(i, i + 3):
+        tr.step(bars.index[j] + pd.Timedelta(hours=1, seconds=5))
+    assert tr.ex.position() == 0 and tr.risk.state.flatten_required
+
+
+def test_flatten_is_retried_after_rejected_exit(pcfg, bars, tmp_path, monkeypatch):
+    from qtrade.execution.orders import OrderRejected
+
+    tr = _trader(pcfg, bars, tmp_path)
+    i = _open_position(tr, bars)
+    real_submit = tr.ex.submit_order
+    calls = {"n": 0}
+
+    def flaky(order):
+        if order.tag in ("exit", "flatten") and calls["n"] == 0:
+            calls["n"] += 1
+            raise OrderRejected("simulated reject")
+        return real_submit(order)
+
+    monkeypatch.setattr(tr.ex, "submit_order", flaky)
+    tr.risk.emergency_stop(bars.index[i], "test kill")
+    for j in range(i, i + 4):
+        tr.step(bars.index[j] + pd.Timedelta(hours=1, seconds=5))
+    assert calls["n"] == 1 and tr.ex.position() == 0
+
+
+def test_timeout_accepted_entry_never_leads_to_second_entry(pcfg, bars, tmp_path):
+    ex = SimulatedExchange(pcfg, 10_000.0, TF, faults={"timeout_prob": 1.0, "timeout_accepts_prob": 1.0})
+    tr = PaperTrader(pcfg, _LimitProbe(), ReplayFeed(bars, TF), ex, tmp_path / "s.json")
+    for ts in bars.index[600:640]:
+        tr.step(ts + pd.Timedelta(hours=1, seconds=5))
+        working = [o for o in ex.open_orders() if o.tag == "entry"]
+        assert len(working) <= 1, [o.client_id for o in working]
+    assert tr.state["pending_entry"] is not None
+
+
+def test_rogue_position_is_flattened_not_adopted(pcfg, bars, tmp_path):
+    kill = tmp_path / "STOP"
+    tr = _trader(pcfg, bars, tmp_path, kill_file=kill)
+    tr.run_replay(_start(bars), bars.index[700])
+    pos_before = tr.state["position"]
+    tr.ex.submit_order(Order(client_id="rogue", side=1, qty=0.01, order_type="market", tag="manual"))
+    kill.write_text("stop")
+    tr.run_replay(bars.index[700], bars.index[706])
+    assert tr.ex.position() == 0
+    assert tr.state["position"] is None or pos_before is not None
+    assert any(cid.startswith("FLATTEN-") or cid.endswith("-K0") for cid in tr.ex.orders)

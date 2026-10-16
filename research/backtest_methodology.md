@@ -131,4 +131,4 @@ conclusion is that no edge was demonstrated, and that will be reported as such.
 
 | Date | Change | Reason | Seen test results before change? |
 |---|---|---|---|
-| — | none yet | — | — |
+| 2026-10-16 | Independent audit fixes, then **all stages re-run** (dev, val, wf, test with `--allow-rerun`): (1) `bars_held` was one bar too high for exits at the open — affects the reported holding time and the random control's `max_hold`, not strategy P&L; (2) risk-manager UTC day now rolls at the bar open (entries filled at 00:00 count toward the new day; daily-loss baseline = previous close); (3) drawdown measured against starting equity; (4) paper-trader/simulator safety fixes (no effect on backtests). The test lock now records code and data hashes. Supplementary (non-decision) analyses added: DSR with null variance 1/(n−1) and executed-trade-matched controls. **No strategy parameter, split, cost scenario or acceptance criterion changed.** | correctness fixes found by audit | yes — the first test run had been completed; verdicts could not be affected because criteria 2, 3, 6, 7 and 8 failed for every candidate independently of the corrected items |

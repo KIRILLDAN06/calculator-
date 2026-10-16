@@ -111,6 +111,7 @@ def test_short_financing_and_time_exit_hand_calculated(cost_cfg):
     # financing: 0.0002/4h * 1h = 0.00005 * 20 * 100 = 0.1 per bar, bars 1 and 2 -> 0.2
     # time exit after 2 bars at bar-3 open 100*(1+0.001)=100.1; fee 20*100.1*0.004 = 8.008
     assert t.exit_reason == "time" and t.exit_time == bars.index[3]
+    assert t.bars_held == 2                       # bars 1 and 2; exit at bar 3's open
     assert t.financing == pytest.approx(0.2)
     assert t.fees == pytest.approx(8.3916 + 8.008)
     assert t.net_pnl == pytest.approx(-20 * (100.1 - 99.9) - 16.3996 - 0.2)
@@ -212,3 +213,23 @@ def test_buy_and_hold_benchmark(cfg, cost_cfg):
     rc = buy_and_hold(bars, cost_cfg)
     qty = 10_000 / (100.1 * 1.004)
     assert rc.equity.iloc[-1] == pytest.approx(qty * 125 * 0.999 * 0.996)
+
+
+def test_day_limit_counts_the_fill_day_and_open_exit_bars_held(cfg):
+    cfg["risk"]["max_trades_per_day"] = 1
+    bars = make_bars([(100, 101, 99, 100)] * 30, start="2024-01-01 00:00", tf="1h")
+    sig = signal_frame(bars)
+    _long(sig, 21, stop=95, max_hold=1)   # fills 22:00 day 1, exits at 23:00 open
+    _long(sig, 23, stop=95, max_hold=1)   # fills 00:00 day 2 -> belongs to day 2's quota
+    res = run_backtest(bars, sig, cfg, timeframe="1h")
+    assert len(res.trades) == 2, res.rejected
+    assert list(res.trades.bars_held) == [1, 1]   # exit at the next open: one bar of exposure
+
+
+def test_drawdown_measured_from_starting_equity():
+    from qtrade.backtest.metrics import drawdown, max_drawdown_duration_days
+
+    idx = pd.date_range("2024-01-01", periods=4, freq="1D", tz="UTC")
+    eq = pd.Series([90.0, 95.0, 101.0, 102.0], index=idx)
+    assert drawdown(eq, 100.0).min() == pytest.approx(-0.10)
+    assert max_drawdown_duration_days(eq, 100.0) == pytest.approx(2.0)

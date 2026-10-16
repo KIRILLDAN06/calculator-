@@ -27,19 +27,25 @@ def daily_returns(equity: pd.Series, initial: float) -> pd.Series:
     return (daily / prev - 1.0).rename("ret")
 
 
-def drawdown(equity: pd.Series) -> pd.Series:
-    return equity / equity.cummax() - 1.0
-
-
-def max_drawdown_duration_days(equity: pd.Series) -> float:
-    """Longest span (days) between a peak and the recovery to that peak (or the end)."""
+def _peak(equity: pd.Series, initial: float | None) -> pd.Series:
     peak = equity.cummax()
+    return peak.clip(lower=initial) if initial is not None else peak
+
+
+def drawdown(equity: pd.Series, initial: float | None = None) -> pd.Series:
+    """Drawdown from the running peak; the starting equity counts as the first peak."""
+    return equity / _peak(equity, initial) - 1.0
+
+
+def max_drawdown_duration_days(equity: pd.Series, initial: float | None = None) -> float:
+    """Longest span (days) between a peak and the recovery to that peak (or the end)."""
+    peak = _peak(equity, initial)
     under = equity < peak
     if not under.any():
         return 0.0
     ts = equity.index
     longest = pd.Timedelta(0)
-    start = None
+    start = ts[0] if bool(under.iloc[0]) else None
     prev_t = ts[0]
     for t, u in zip(ts, under.to_numpy(), strict=True):
         if u and start is None:
@@ -119,8 +125,8 @@ def compute_metrics(res: BacktestResult) -> dict[str, Any]:
         "profit_factor": _safe_div(float(wins.sum()), abs(float(losses.sum()))) if len(losses) else float("nan"),
         "expectancy_usd": float(tr["net_pnl"].mean()) if len(tr) else float("nan"),
         "expectancy_r": float(tr["r_multiple"].mean()) if len(tr) else float("nan"),
-        "max_drawdown": float(drawdown(eq).min()),
-        "max_drawdown_days": max_drawdown_duration_days(eq),
+        "max_drawdown": float(drawdown(eq, initial).min()),
+        "max_drawdown_days": max_drawdown_duration_days(eq, initial),
         "sharpe": sharpe(dr),
         "sortino": sortino(dr),
         "daily_vol_ann": float(dr.std(ddof=1) * math.sqrt(DAYS_PER_YEAR)) if len(dr) > 1 else float("nan"),

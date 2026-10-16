@@ -145,7 +145,8 @@ def run_backtest(
         if fill != ref:
             risk.on_fill(idx[i], abs(fill / ref - 1) * 1e4)
 
-    def close_position(i: int, ref: float, fill: float, fee_rate: float, reason: str) -> None:
+    def close_position(i: int, ref: float, fill: float, fee_rate: float, reason: str,
+                       at_open: bool = False) -> None:
         nonlocal cash, pos
         assert pos is not None
         side, qty = pos["side"], pos["qty"]
@@ -159,7 +160,9 @@ def run_backtest(
             "entry_time": idx[pos["entry_i"]], "exit_time": idx[i] if reason != "end" else idx[i] + bar_td,
             "side": side, "qty": qty, "entry_ref": pos["entry_ref"], "entry_price": pos["entry_price"],
             "exit_ref": ref, "exit_price": fill, "stop_initial": pos["stop_initial"], "target": pos["target"],
-            "entry_type": pos["entry_type"], "exit_reason": reason, "bars_held": i - pos["entry_i"] + 1,
+            "entry_type": pos["entry_type"], "exit_reason": reason,
+            # bars the position was exposed to: an exit at bar i's open does not include bar i
+            "bars_held": i - pos["entry_i"] + (0 if at_open else 1),
             "gross_pnl": gross, "fees": fees, "financing": pos["financing"],
             "slippage_cost": gross - realised, "net_pnl": net, "risk_usd": pos["risk_usd"],
             "r_multiple": net / pos["risk_usd"] if pos["risk_usd"] > 0 else np.nan,
@@ -170,10 +173,12 @@ def run_backtest(
 
     equity = initial
     for i in range(i0, i1):
+        # ---- day roll at the open, before any fill of this bar (equity = previous close)
+        risk.start_day(int(day_key[i]), equity)
         # ---- at the open: exits first, then entries
         if pend_exit is not None and pos is not None:
             side = pos["side"]
-            close_position(i, o[i], o[i] * (1 - side * slip), fee_t, pend_exit)
+            close_position(i, o[i], o[i] * (1 - side * slip), fee_t, pend_exit, at_open=True)
         pend_exit = None
 
         if pend_mkt is not None and pos is None:

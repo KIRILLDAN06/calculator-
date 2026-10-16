@@ -89,18 +89,31 @@ def test_limit_entry_trade_through_and_expiry(ex_cfg):
     assert ex.get_order("L").status == OrderStatus.EXPIRED
 
 
-def test_partial_fills_complete_over_bars_then_bracket(ex_cfg):
+def test_partial_fills_are_protected_immediately_and_bracket_resized(ex_cfg):
     ex = SimulatedExchange(ex_cfg, 10_000, 60, faults={"partial_fill_frac": 0.5})
     ex.submit_order(mk(cid="p", qty=1.0, tag="entry", meta={"stop": 90.0}))
     ex.process_bar(T0, 100, 101, 99, 100)
     assert ex.get_order("p").status == OrderStatus.PARTIALLY_FILLED and ex.position() == 0.5
-    assert ex.get_order("p-SL") is None
+    assert ex.get_order("p-SL").qty == pytest.approx(0.5)        # protected after the first partial fill
     for k in range(1, 20):
         ex.process_bar(T0 + pd.Timedelta(hours=k), 100, 101, 99, 100)
         if ex.get_order("p").status == OrderStatus.FILLED:
             break
     assert ex.position() == pytest.approx(1.0)
-    assert ex.get_order("p-SL").qty == pytest.approx(1.0)
+    assert ex.get_order("p-SL").qty == pytest.approx(1.0)        # resized with every fill
+
+
+def test_stop_breach_during_partial_fill_exits_and_cancels_remainder(ex_cfg):
+    # Audit reproduction: previously no stop existed and the remainder kept filling into the crash.
+    ex = SimulatedExchange(ex_cfg, 10_000, 60, faults={"partial_fill_frac": 0.5})
+    ex.submit_order(mk(cid="p", qty=10.0, tag="entry", meta={"stop": 95.0}))
+    ex.process_bar(T0, 100, 101, 99, 100)
+    assert ex.position() == pytest.approx(5.0)
+    ex.process_bar(T0 + pd.Timedelta(hours=1), 80, 81, 60, 70)    # gaps far below the stop
+    assert ex.get_order("p").status == OrderStatus.CANCELED
+    assert ex.position() == pytest.approx(0.0)
+    ex.process_bar(T0 + pd.Timedelta(hours=2), 70, 71, 69, 70)
+    assert ex.position() == pytest.approx(0.0)                    # nothing keeps filling afterwards
 
 
 def test_reduce_only_cannot_open_or_flip(ex_cfg):

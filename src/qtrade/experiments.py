@@ -14,7 +14,6 @@ import copy
 import itertools
 import json
 import math
-import os
 import subprocess
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
@@ -127,6 +126,16 @@ def _data_hash() -> str:
     return ",".join(f"{tf}:{v['sha256'][:10]}" for tf, v in r["bars"].items())
 
 
+def _code_hash() -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    for f in sorted((ROOT / "src" / "qtrade").rglob("*.py")):
+        h.update(f.relative_to(ROOT).as_posix().encode())
+        h.update(f.read_bytes())
+    return h.hexdigest()[:16]
+
+
 def log_experiment(record: dict[str, Any]) -> None:
     LOG.parent.mkdir(parents=True, exist_ok=True)
     rec = {"logged_at": datetime.now(UTC).isoformat(timespec="seconds"), "git": _git_commit(),
@@ -155,7 +164,10 @@ def _control_job(args: tuple) -> float:
     return float(res.equity.iloc[-1] / res.initial_equity - 1)
 
 
-def random_controls(cand: Candidate, start: str, end: str, n_seeds: int = 200, workers: int = 4) -> dict:
+def random_controls(cand: Candidate, start: str, end: str, n_seeds: int = 200, workers: int = 4,
+                    match: str = "signals") -> dict:
+    """Random-entry control. ``match='signals'`` (pre-registered): entry rate from the candidate's
+    signal count; ``match='trades'`` (supplementary): from its executed trade count."""
     strat = make_strategy(cand.strategy, cand.base)
     tf = strat.timeframe
     bars = bars_for(tf)
@@ -163,6 +175,8 @@ def random_controls(cand: Candidate, start: str, end: str, n_seeds: int = 200, w
     win = (bars.index >= pd.Timestamp(start, tz="UTC")) & (bars.index < pd.Timestamp(end, tz="UTC"))
     n_sig = int((sig.loc[win, "entry"] != 0).sum())
     res, _ = run_config(cand.strategy, cand.base, start, end)
+    if match == "trades":
+        n_sig = len(res.trades)
     hold = int(np.median(res.trades["bars_held"])) if len(res.trades) else 16
     params: dict[str, Any] = {"max_hold": max(hold, 1), "stop_atr": 2.0, "rr": 2.0, "atr_n": 14}
     if cand.session:
@@ -180,7 +194,7 @@ def random_controls(cand: Candidate, start: str, end: str, n_seeds: int = 200, w
     with ProcessPoolExecutor(max_workers=workers) as pool:
         rets = list(pool.map(_control_job, jobs, chunksize=4))
     arr = np.array(rets)
-    return {"n_seeds": n_seeds, "params": params, "candidate_signals": n_sig,
+    return {"n_seeds": n_seeds, "match": match, "params": params, "candidate_signals": n_sig,
             "mean": float(arr.mean()), "p05": float(np.quantile(arr, 0.05)),
             "p50": float(np.median(arr)), "p95": float(np.quantile(arr, 0.95)), "returns": arr.tolist()}
 
@@ -271,7 +285,7 @@ def stage_walk_forward() -> dict[str, Any]:
 
 def _lock_payload() -> dict[str, Any]:
     return {"candidates": {c.cid: {"strategy": c.strategy, "params": c.base} for c in CANDIDATES},
-            "split": SPLITS["test"], "costs": COSTS}
+            "split": SPLITS["test"], "costs": COSTS, "code_sha256": _code_hash(), "data": _data_hash()}
 
 
 def stage_test(allow_rerun: bool = False, n_seeds: int = 200) -> dict[str, Any]:
@@ -280,12 +294,18 @@ def stage_test(allow_rerun: bool = False, n_seeds: int = 200) -> dict[str, Any]:
     if lock.exists():
         prev = json.loads(lock.read_text())
         if prev["payload"] != json.loads(json.dumps(payload, default=str)) and not allow_rerun:
-            raise SystemExit("test stage already run with different configuration; refusing (see methodology)")
+            raise SystemExit("test stage already run with different configuration, code or data; refusing "
+                             "(see methodology). Use --allow-rerun only for a logged deviation.")
         if not allow_rerun:
             print("test stage already run with this exact configuration; re-running for reproducibility only")
     lock.parent.mkdir(parents=True, exist_ok=True)
+    history = json.loads(lock.read_text()).get("history", []) if lock.exists() else []
+    if lock.exists():
+        prev = json.loads(lock.read_text())
+        history.append({k: prev.get(k) for k in ("locked_at", "git", "payload")})
     lock.write_text(json.dumps({"locked_at": datetime.now(UTC).isoformat(timespec="seconds"),
-                                "git": _git_commit(), "payload": payload}, indent=2, default=str))
+                                "git": _git_commit(), "payload": payload, "history": history},
+                               indent=2, default=str))
     out = stage_period("test", with_grid=False)
     start, end = SPLITS["test"]
     val = json.loads((OUT / "val" / "summary.json").read_text()) if (OUT / "val" / "summary.json").exists() else None
@@ -301,10 +321,16 @@ def stage_test(allow_rerun: bool = False, n_seeds: int = 200) -> dict[str, Any]:
         e["dsr"] = deflated_sharpe_ratio(dr, N_TRIALS, var_sr)
         e["dsr"]["n_trials"] = N_TRIALS
         e["dsr"]["var_sr_trials"] = var_sr
+        # Supplementary (post-audit, not a decision input): null variance 1/(n-1).
+        e["dsr_null_variance"] = deflated_sharpe_ratio(dr, N_TRIALS, None)
         ctrl = random_controls(cand, start, end, n_seeds=n_seeds)
         net = e["baseline"]["baseline"]["net_return"]
         e["control"] = {k: v for k, v in ctrl.items() if k != "returns"}
         e["control"]["percentile_of_candidate"] = float((np.array(ctrl["returns"]) < net).mean())
+        # Supplementary (post-audit, not a decision input): control matched to executed trades.
+        ctrl_t = random_controls(cand, start, end, n_seeds=max(n_seeds // 2, 20), match="trades")
+        e["control_trade_matched"] = {k: v for k, v in ctrl_t.items() if k != "returns"}
+        e["control_trade_matched"]["percentile_of_candidate"] = float((np.array(ctrl_t["returns"]) < net).mean())
         e["by_direction"] = {"long_trades": e["baseline"]["baseline"]["long_trades"],
                              "short_trades": e["baseline"]["baseline"]["short_trades"]}
         e["monthly"] = {str(k.date()): float(v) for k, v in period_returns(res, "ME").items()}
@@ -339,7 +365,6 @@ def save(stage: str, out: dict[str, Any]) -> Path:
 
 
 def run_stage(stage: str, allow_rerun: bool = False, seeds: int = 200) -> Path:
-    os.environ.setdefault("PYTHONHASHSEED", "0")
     if stage == "dev":
         out = stage_period("dev", with_grid=True)
     elif stage == "val":

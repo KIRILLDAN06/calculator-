@@ -12,7 +12,9 @@ Safety properties (each covered by tests/test_paper.py and tests/test_failures.p
   before doing anything else. A mismatch halts new entries and raises an alert.
 * Stale, missing or malformed market data -> no new entries (exchange-side
   protective stops keep working).
-* An emergency-stop file flattens and halts permanently.
+* An emergency-stop file or kill switch flattens (re-attempted every step until the
+  exchange position is zero, including positions the trader did not open) and halts.
+* At most one entry order may be working at any time.
 
 Usage::
 
@@ -42,7 +44,7 @@ from qtrade.execution.orders import (
     RateLimited,
 )
 from qtrade.execution.simulator import SimulatedExchange
-from qtrade.risk import RiskManager
+from qtrade.risk import RiskManager, utc_day
 from qtrade.strategies.base import Strategy
 
 log = logging.getLogger("qtrade.paper")
@@ -165,6 +167,8 @@ class PaperTrader:
             if remote is not None:
                 self.state["orders"][cid] = remote.to_dict()
                 rep.actions.append(f"reconciled {cid}: exists ({remote.status})")
+                if remote.tag == "entry" and remote.status not in TERMINAL:
+                    self.state["pending_entry"] = cid  # accepted despite the timeout
             else:
                 self.state["orders"][cid]["status"] = str(OrderStatus.REJECTED)
                 self.state["orders"][cid]["reason"] = "not found after timeout"
@@ -212,6 +216,9 @@ class PaperTrader:
             return
         if f.liquidity == "taker" and f.ref_price and math.isfinite(f.ref_price) and f.ref_price > 0:
             self.risk.on_fill(ts, abs(f.price / f.ref_price - 1) * 1e4)
+        if self.state["orders"].get(f.client_id, {}).get("tag") == "flatten" and pos is None:
+            rep.actions.append(f"flatten fill {f.side:+d} {f.qty} @ {f.price:.2f} (position not ours)")
+            return
         if pos is None or pos["qty"] == 0:
             parent = self.state["orders"].get(f.client_id, {})
             meta = parent.get("meta", {})
@@ -289,15 +296,43 @@ class PaperTrader:
         self._submit(Order(client_id=cid, side=-pos["side"], qty=remaining, order_type="market",
                            reduce_only=True, tag="exit"), rep)
 
+    def _cancel_entry_orders(self) -> None:
+        for o in self.ex.open_orders():
+            if o.tag == "entry":
+                self.ex.cancel_order(o.client_id)
+        self.state["pending_entry"] = None
+
+    def _flatten(self, rep: StepReport) -> None:
+        """Bring the *exchange* position to zero; called every step while flattening is required.
+
+        Retries after rejected/lost orders and also flattens positions the trader did not open.
+        """
+        self._cancel_entry_orders()
+        remote = self.ex.position()
+        if abs(remote) < 1e-12:
+            return
+        if any(o.tag in ("exit", "flatten") for o in self.ex.open_orders()):
+            return  # a flattening order is already working (fills at the next bar's open)
+        pos = self.state["position"]
+        internal = 0.0 if pos is None else pos["side"] * (pos["qty"] - pos["exit_qty"])
+        if pos is not None and abs(internal - remote) <= 1e-8:
+            n = sum(cid.startswith(pos["entry_id"] + "-K") for cid in self.state["orders"])
+            self._submit_exit(self.risk.state.halt_reason or "flatten", rep, suffix=f"K{n}")
+        else:
+            n = sum(cid.startswith("FLATTEN-") for cid in self.state["orders"])
+            lot = int(self.cfg["execution"]["lot_decimals"])
+            self._submit(Order(client_id=f"FLATTEN-{n}", side=-1 if remote > 0 else 1,
+                               qty=round(abs(remote), lot), order_type="market", reduce_only=True,
+                               tag="flatten"), rep)
+
     # ------------------------------------------------------------------ step
     def step(self, now: pd.Timestamp) -> StepReport:
         rep = StepReport(now=now.isoformat())
         cfg_r = self.cfg["risk"]
 
-        if self.kill_file is not None and self.kill_file.exists() and not self.risk.state.halted:
+        if self.kill_file is not None and self.kill_file.exists() and not self.risk.state.flatten_required:
             self.risk.emergency_stop(now, f"emergency stop file {self.kill_file}")
             self.alert("critical", "emergency stop triggered: flattening and halting", now)
-            self._submit_exit("emergency_stop", rep)
 
         try:
             raw = self.feed.fetch(now)
@@ -318,12 +353,16 @@ class PaperTrader:
         new = bars if last is None else bars[bars.index > pd.Timestamp(last)]
         rep.new_bars = len(new)
 
-        # 1. exchange processes new bars (paper exchange driven by market data)
+        # 1. exchange processes new bars (paper exchange driven by market data); the risk
+        #    manager's UTC day rolls at each bar's open, before that bar's fills
         for ts, row in new.iterrows():
+            self.risk.start_day(utc_day(ts), self.ex.equity())
             self.ex.process_bar(ts, row["open"], row["high"], row["low"], row["close"])
         self._reconcile_unknown(rep)
         self._ingest_fills(rep)
         recon_ok = self._reconcile_position(rep)
+        if self.risk.state.flatten_required:
+            self._flatten(rep)
 
         latest_ts = bars.index[-1]
         age_s = (now - (latest_ts + self.td)).total_seconds()
@@ -337,9 +376,11 @@ class PaperTrader:
             return rep
         latest = new.iloc[-1]
         equity = self.ex.equity(float(latest["close"]))
-        if self.risk.on_bar(latest_ts, equity) and self.state["position"] is not None:
-            self.alert("critical", f"kill switch: {self.risk.state.halt_reason}", now)
-            self._submit_exit("kill_switch", rep)
+        was_flattening = self.risk.state.flatten_required
+        if self.risk.on_bar(latest_ts, equity):
+            if not was_flattening:
+                self.alert("critical", f"kill switch: {self.risk.state.halt_reason}", now)
+            self._flatten(rep)
 
         # 2. strategy on completed bars (same code path as the backtest)
         window = bars if self.window_bars is None else bars.iloc[-self.window_bars:]
@@ -360,9 +401,8 @@ class PaperTrader:
                 self._submit_exit("signal_exit", rep)
             elif pos.get("max_hold") is not None and not math.isnan(pos["max_hold"]) and held >= pos["max_hold"]:
                 self._submit_exit("time", rep)
-        if bool(sig["exit"]) and self.state["pending_entry"]:
-            self.ex.cancel_order(self.state["pending_entry"])
-            self.state["pending_entry"] = None
+        if bool(sig["exit"]):
+            self._cancel_entry_orders()
 
         side = int(sig["entry"])
         pending = self.state["pending_entry"]
@@ -370,6 +410,9 @@ class PaperTrader:
             o = self.ex.get_order(pending)
             if o is None or o.status in TERMINAL:
                 self.state["pending_entry"] = None
+        working_entries = [o.client_id for o in self.ex.open_orders() if o.tag == "entry"]
+        if working_entries and self.state["pending_entry"] is None:
+            self.state["pending_entry"] = working_entries[0]  # never run two entry orders at once
         if side != 0:
             if stale or not recon_ok:
                 rep.actions.append("entry skipped: stale data or reconciliation failure")
