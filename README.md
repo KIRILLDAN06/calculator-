@@ -3,7 +3,7 @@
 A reproducible research and paper-trading framework built to answer one question honestly:
 **do any publicly described day-trading strategies show a genuine, cost-surviving edge?**
 It contains a validated data pipeline, a conservative event-driven backtester, independent risk
-controls, a fault-injectable simulated exchange, a restart-safe paper trader, and 131 automated tests.
+controls, a fault-injectable simulated exchange, a restart-safe paper trader, and 138 automated tests.
 
 > **Live trading is disabled.** No real-money order has been placed or can be placed without three
 > separate human-controlled gates (see `research/risk_management.md`). Software tests passing is
@@ -20,7 +20,7 @@ python -m pip install -r requirements.txt && python -m pip install -e .
 python -m qtrade.data.download
 python -m qtrade.data.pipeline            # validate + build complete bars -> data/clean/
 
-# 2. validation suite (lint, configs, live-gate, secrets scan, 131 tests, reproducible backtest)
+# 2. validation suite (lint, configs, live-gate, secrets scan, 138 tests, reproducible backtest)
 python scripts/run_validation.py          # exit code != 0 on any mandatory failure
 
 # 3. a single backtest
@@ -55,7 +55,7 @@ src/qtrade/
   experiments.py         pre-registered experiment stages
 configs/                 backtest.yaml, paper.yaml (no secrets; live disabled)
 scripts/                 run_validation.py, run_experiments.py
-tests/                   131 tests across layers A-G
+tests/                   138 tests across layers A-G
 research/                all research deliverables (start with README.md there)
 PROJECT_STATUS.md        requirement-by-requirement PASS / FAIL / BLOCKED / NOT TESTED
 ```

@@ -33,15 +33,15 @@ python <scratchpad>/equiv.py <strategy> <warmup> <start> <end> [window]   # pape
 | Layer | Tests | Passed | Failed | Skipped | Notes |
 |---|---|---|---|---|---|
 | A static/basic | compile, imports (19 modules), ruff, configs, live gate, secrets scan + 11 pytest | all | 0 | 0 | `run_validation.py`: 8/8 PASS |
-| B unit | engine 16, strategies 17, risk+metrics 21, execution 23, config/data/features 19 | 96 | 0 | 0 | engine expectations hand-calculated |
+| B unit | engine 18, strategies 17, risk+metrics 21, execution 24, config/data/features 19 | 99 | 0 | 0 | engine expectations hand-calculated |
 | C integration | paper-vs-backtest (3), CLI (4), pipeline end-to-end | all | 0 | 0 | |
 | D backtest correctness | look-ahead 21 (incl. 2 on real data), stale/incomplete bars, reproducibility | all | 0 | 0 | mutation-checked (§5) |
 | E robustness/OOS | experiment stages dev/val/wf/test | executed | — | — | strategy outcomes in `results.md` (all strategies fail criteria) |
-| F failure/recovery | 8 paper tests + simulator fault tests | all | 0 | 0 | |
+| F failure/recovery | 12 paper tests + simulator fault tests | all | 0 | 0 | incl. 4 audit regressions |
 | G paper trading | replay run + restart run | PASS (mechanics) | 0 | — | live-feed paper: **BLOCKED** |
-| **Total pytest** | **131** | **131** | **0** | **0** | 2 data-marked tests skip automatically when the dataset is absent (e.g. CI) |
+| **Total pytest** | **138** | **138** | **0** | **0** | 2 data-marked tests skip automatically when the dataset is absent (e.g. CI) |
 
-Final full run: `python scripts/run_validation.py` → `RESULT: PASS` (pytest: 131 passed).
+Final full run: `python scripts/run_validation.py` → `RESULT: PASS` (pytest: 138 passed).
 
 ## 4. Bugs discovered and fixed
 
@@ -54,6 +54,15 @@ Final full run: `python scripts/run_validation.py` → `RESULT: PASS` (pytest: 1
 | 5 | **Paper trader adopted fills of orders it never placed** (would mask a rogue/manual position) | failure test | unknown fills → critical alert + halt; reconciliation flags mismatch | `test_unexpected_position_halts_new_entries` |
 | 6 | Reconciliation alert repeated every poll | failure test | alert on state transition | same |
 | 7 | Look-ahead perturbation test could miss a leak (single cut point) | mutation test | reflection perturbation at 6 cut points | `test_future_perturbation_invariance` |
+| 8 | **Emergency stop ignored when already halted; failed kill-switch exit never retried** | independent audit | persistent `flatten_required`; flatten re-attempted every step until the exchange is flat (incl. positions not opened by the trader) | `test_emergency_stop_flattens_even_when_already_halted`, `test_flatten_is_retried_after_rejected_exit`, `test_rogue_position_is_flattened_not_adopted` |
+| 9 | **Timeout-accepted entry forgotten → second entry order could be sent** | independent audit | UNKNOWN entry found on exchange restored as pending; any working entry blocks new entries; session exit cancels all entry orders | `test_timeout_accepted_entry_never_leads_to_second_entry` |
+| 10 | **Partially filled entries unprotected (no stop until fully filled)** | independent audit | bracket created/resized on every fill; triggered stop cancels the remainder | `test_partial_fills_are_protected_immediately…`, `test_stop_breach_during_partial_fill…` |
+| 11 | `bars_held` one too high for exits at the open (reporting + control hold time) | independent audit | exposure-based count | `test_day_limit_counts_the_fill_day_and_open_exit_bars_held`, financing test |
+| 12 | Risk-manager UTC day rolled at first bar *close* (00:00 fills counted to the previous day) | independent audit | day rolls at bar open; entry checks use the fill day | same + risk test |
+| 13 | Drawdown ignored starting equity when the first bar was already below it | independent audit | peak floored at initial equity | `test_drawdown_measured_from_starting_equity` |
+
+All audit regression tests were run against the pre-fix source (stashed) and **failed there**
+(10 of 10), then passed on the fixed code.
 
 Test-side corrections (test was wrong, code right): extreme-move test data; daily-loss limit
 correctly firing in the drawdown-halt test; non-vacuity guard for SweepFVG look-ahead tests.
@@ -65,7 +74,8 @@ correctly firing in the drawdown-halt test; non-vacuity guard for SweepFVG look-
   stops, sizing caps) plus an accounting identity (final equity = initial + Σ net P&L) on random data.
 * **Independent implementation cross-check:** the order-level simulator + paper trader reproduce
   the vectorised engine trade-for-trade on real data: C1 39/39 trades, C2 38/38, C3 90/90 (one exit
-  price differs by $0.0001 — floating-point order of operations), C4 20/20 compared, C5 see §8.
+  price differs by $0.0001 — floating-point order of operations), C4 20/20 compared, C5 2/2 (the only
+  real setups in Jul–Aug 2023; an earlier attempt on a window without setups was vacuous and is not counted).
 * **Mutation test of look-ahead detection:** a strategy peeking one bar ahead is caught by both the
   truncation and the perturbation checks; a centred-window leak is caught by the truncation check.
 * **Cost model:** measured round-trip cost 86–89 bp of notional vs. 86 bp expected from first principles.
@@ -99,12 +109,37 @@ emergency-stop file → flatten + permanent halt · live config / non-simulated 
 * **NOT TESTED:** Kraken private endpoints against the real exchange (by design, live disabled);
   client-side OCO for Kraken; webhook alert delivery.
 * Bar-level stop/target ordering (no 1-minute intrabar resolution) — conservative but approximate.
-* Real-data SweepFVG equivalence: Jul–Aug 2023 window (2 real setups) — see appended result below.
-* Independent audit findings — see §9.
+* Supplementary-only analyses (not decision inputs): DSR with null variance; trade-matched controls.
+* Simulated short financing is pro-rata per bar (Kraken charges per 4-hour block); difference ≤ ~2 bp per trade.
 
 ## 9. Independent audit
 
-(Appended after the read-only audit completes.)
+A separate agent performed a read-only audit (look-ahead, fills/accounting, metrics/statistics,
+paper-trader safety, methodology), confirming each issue with a reproduction.
+
+**Confirmed correct by the auditor:** no look-ahead on real data (19 configurations × 4 cut points,
+incl. mid-session cuts — computing signals once over full history then windowing is safe);
+accounting identity exact on all test runs; fills conservative (no gap improvement on limits,
+stop-first, target ignored on limit fill bar); metrics/PSR/bootstrap formulas correct;
+pre-registration followed (methodology committed 13:17 UTC, first result 13:43 UTC); live gates hold.
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| Emergency stop / kill-switch flatten not retried | major | fixed (#8) |
+| Timeout-accepted entry → duplicate entry | major | fixed (#9) |
+| Partial fills unprotected | major | fixed (#10) |
+| DSR criterion cannot pass (cross-trial variance inflated) | major (methodology) | documented as deviation; supplementary DSR with null variance reported; verdicts unaffected |
+| Random controls not matched (signals vs trades, taker vs maker, hold) | major (methodology) | documented; supplementary trade-matched controls reported; verdicts unaffected |
+| `bars_held` off by one | minor | fixed (#11) |
+| Day-boundary handling | minor | fixed (#12) |
+| Drawdown vs starting equity | minor | fixed (#13) |
+| Pro-rata short financing | minor | documented (conservative for holds < 4 h) |
+| Lock without code/data hash; uncommitted results | minor | lock now hashes code + data; everything committed |
+| C5 cost label | minor | fixed in `results_tables.md` |
+
+After the fixes **all experiment stages were re-run** on the fixed code (logged deviation; no
+strategy parameter changed). The auditor's bottom line — "nothing overturns *all strategies fail
+after costs*" — was confirmed by the re-run.
 
 ## 10. Reproduction
 
@@ -127,7 +162,7 @@ pinned data, no wall-clock dependence).
 |---|---|
 | Code written for all modules in the architecture | yes |
 | Code executed (pipeline, backtests, experiments, paper replay, CLIs) | yes |
-| Automated tests passed | 131/131, validation 8/8 |
+| Automated tests passed | 138/138, validation 8/8 |
 | Historical strategy performance measured | yes — all candidates unprofitable after costs |
 | Paper trading completed | replay mode only; live-feed paper trading **not** run (blocked) |
 | Live execution tested | **no** — never authorised, never attempted |

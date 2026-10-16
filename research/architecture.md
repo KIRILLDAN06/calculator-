@@ -44,7 +44,7 @@ trader, and both route every entry through the same `RiskManager`.
 | 14 | Performance analytics | `backtest/metrics.py`, `backtest/stats.py` | done/tested |
 | 15 | Alerts | `paper.Alerter` (file + log; webhook hook point not wired) | partial |
 | 16 | Configuration | `config.py` (defaults + YAML + validation; secrets only via env) | done/tested |
-| 17 | Automated tests | `tests/` (131 tests), `scripts/run_validation.py`, CI workflow | done |
+| 17 | Automated tests | `tests/` (138 tests), `scripts/run_validation.py`, CI workflow | done |
 | 18 | Paper trading mode | `paper.py`, `paper_trade.py` | replay mode done/tested; live-feed mode blocked |
 | 19 | Live trading mode | `config.assert_live_trading_allowed` + `KrakenPrivateClient` (validate-only default) | **disabled; not tested; not approved** |
 

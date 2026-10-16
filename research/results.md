@@ -34,20 +34,28 @@ Sharpe uses daily returns × √365. Equity is $10,000, risk 0.5% per trade.
 |---|---|---|---|---|---|---|---|---|---|
 | C1 | ✅ | ❌ | ❌ | ❌ | ✅ (100%) | ❌ | ❌ | ❌ | **FAILED** |
 | C2 | ✅ | ❌ | ❌ | ❌ | ❌ (42%) | ❌ | ❌ | ❌ | **FAILED** |
-| C3 | ✅ | ❌ | ❌ | ❌ | ❌ (33%) | ❌ | ❌ | ❌ | **FAILED** |
+| C3 | ✅ | ❌ | ❌ | ❌ | ❌ (57%) | ❌ | ❌ | ❌ | **FAILED** |
 | C4 | ✅ | ❌ | ❌ | ❌ | ✅ (96%) | ❌ | ❌ | ❌ | **FAILED** |
 | C5 | ❌ | ❌ | ❌ | ❌ | ✅ (100%) | ❌ | ❌ | ❌ | **INSUFFICIENT EVIDENCE** |
 
-**How to read "beats controls".** The random-entry controls fire as often as the candidate
-*signals* (not executed trades) and pay the same costs, so they lose even more (C1 controls:
-median −91.7%; C4: −98.5%; C5: −23.7%). Beating them shows the candidates are not *worse* than
-random timing; it is not evidence of profitability. The control is also only partially matched
-(signal count rather than executed trade count) — a known weakness of this design.
+**How to read "beats controls".** The pre-registered random-entry controls fire as often as the
+candidate's *signals* (not executed trades) and pay the same costs, so they lose even more (C1
+controls: median −91.7%; C4: −98.5%; C5: −23.7%). Beating them shows the candidates are not
+*worse* than random timing; it is not evidence of profitability. The independent audit showed the
+design is only partially matched, so a **supplementary** control matched to *executed* trade count
+(100 seeds, not a decision input) was added: there **C1 beats only 41% of controls** (its 100% was
+an artifact of the signal-count matching), C2 0%, C3 56%, C4 97%, C5 98% (C5 controls still use
+taker entries, C5 uses maker limit entries).
 
 **DSR caveat.** The pre-registered Deflated Sharpe Ratio used the cross-trial variance of daily
 Sharpe in the validation grid (0.21), which is inflated by the catastrophically negative
-strategies; the resulting deflation benchmark is uninformative. The verdict does not depend on it:
-every candidate's test Sharpe is negative and its plain PSR (vs. 0) is ≈ 0 (C5: 0.04).
+strategies; the resulting deflation benchmark is uninformative. A supplementary DSR with the null
+variance 1/(n−1) is also 0.00 for every candidate. The verdict does not depend on either: every
+candidate's test Sharpe is negative and its plain PSR (vs. 0) is ≈ 0 (C5: 0.04).
+
+**Re-run note.** These are the results of the re-run on the audited code (commit `9e690ff`); the
+first run (commit `2d24230`) gave the same verdicts and, apart from C2 trade counts (±1) and the
+C3 control percentile (33% → 57%, via the corrected holding-period count), the same numbers.
 
 Yearly holdout returns (baseline costs): C1 −30.7% / −49.8% / −31.7% (2024/25/26);
 C4 −70.4% / −77.5% / −68.5%; C5 −0.9% / −1.0% / −3.1%. Losses were not concentrated in one episode.
@@ -59,7 +67,7 @@ Buy-and-hold: −9.4%, Sharpe 0.19, max DD −67.4%.
 | Cand. | Trades | Net (baseline) | Sharpe | Net (optimistic) | Net (zero cost) | Sharpe (zero cost) |
 |---|---|---|---|---|---|---|
 | C1 | 284 | −59.3% | −2.31 | −7.3% | +38.2% | 1.03 |
-| C2 | 1217 | −100.0% | −22.3 | −82.8% | +36.5% | 1.48 |
+| C2 | 1218 | −100.0% | −22.3 | −82.7% | +37.2% | 1.50 |
 | C3 | 722 | −97.4% | −35.5 | −62.6% | +6.1% | 1.09 |
 | C4 | 514 | −87.9% | −6.02 | **+9.3%** | +120.8% | 2.76 |
 | C5 | 12 | −3.3% | −1.04 | −0.2% | +0.5% | 0.20 |
@@ -71,7 +79,7 @@ Buy-and-hold: +4,642%, Sharpe 1.36, max DD −83.9%.
 | Cand. | Trades | Net (baseline) | Sharpe | Net (optimistic) | Net (zero cost) | Sharpe (zero cost) |
 |---|---|---|---|---|---|---|
 | C1 | 664 | −11.5% | −0.06 | **+178.9%** | +392.4% | 2.03 |
-| C2 | 1860 | −100.0% | −12.9 | −98.3% | −36.0% | −0.76 |
+| C2 | 1861 | −100.0% | −12.9 | −98.3% | −35.8% | −0.76 |
 | C3 | 1821 | −99.7% | −26.9 | −81.3% | +3.6% | 0.26 |
 | C4 | 1285 | −99.8% | −7.31 | −64.0% | +117.5% | 1.16 |
 | C5 | 10 | −2.9% | −0.72 | −0.8% | −0.2% | −0.07 |
@@ -98,12 +106,13 @@ Re-optimisation did not rescue any candidate; selection drifted toward slower/fe
 ## 5. Why they fail: costs versus gross edge
 
 Gross expectancy per trade from zero-cost runs (bp of entry notional, 95% CI), against a modelled
-baseline round trip of ≈ 86 bp (2 × 0.38% taker + 2 × 5 bp slippage; measured median 86–89 bp):
+baseline round trip of ≈ 86 bp for taker-in/taker-out trades (2 × 0.38% + 2 × 5 bp; measured
+median 86–89 bp), ≈ 70 bp for C2's maker take-profits and ≈ 44–65 bp for C5's maker limit entries:
 
 | Cand. | Development | Validation | Test |
 |---|---|---|---|
 | C1 donchian | 50.3 [13.1, 87.5] | 24.5 [−18.8, 67.8] | 6.5 [−17.7, 30.7] |
-| C2 bollinger | −3.6 [−7.7, 0.5] | 3.2 [−0.8, 7.2] | −1.8 [−4.9, 1.2] |
+| C2 bollinger | −3.6 [−7.7, 0.5] | 3.3 [−0.8, 7.3] | −1.8 [−4.9, 1.2] |
 | C3 intraday momentum | 0.5 [−2.2, 3.1] | 1.0 [−1.4, 3.4] | −0.7 [−2.3, 0.9] |
 | C4 ORB | 9.6 [0.4, 18.9] | 22.8 [8.4, 37.2] | 5.8 [−3.9, 15.4] |
 | C5 sweep/FVG | −5.4 [−84, 73] | 13.4 [−61, 88] | 28.2 [−20, 77] |

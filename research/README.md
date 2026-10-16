@@ -11,7 +11,7 @@ cost-surviving statistical edge — and only then build software around what the
 **No edge was demonstrated.** Five pre-registered candidates (trend, mean reversion, intraday
 momentum, US-open ORB, TJR/SMC-style sweep→BOS→FVG) all lost money after realistic Kraken costs in
 validation, walk-forward and the untouched 2024-2026 holdout. See `final_recommendation.md`.
-The software (pipeline, backtester, risk manager, simulated exchange, paper trader, 131 tests) is
+The software (pipeline, backtester, risk manager, simulated exchange, paper trader, 138 tests) is
 complete and verified; live trading is disabled and not recommended.
 
 ## Reading order

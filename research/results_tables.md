@@ -7,7 +7,7 @@
 | Cand. | Strategy | Trades | Net (baseline) | Sharpe | Max DD | Win % | PF | Exp. R | Net (stress) | Net (optimistic) | Net (zero cost) | Sharpe (zero cost) | Bootstrap 90% CI (Sharpe) |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | C1 | donchian_trend | 664 | -11.5% | -0.06 | -42.0% | 27 | 0.97 | -0.02 | -84.5% | +178.9% | +392.4% | 2.03 | [-0.78, 0.63] |
-| C2 | bollinger_mr | 1860 | -100.0% | -12.88 | -100.0% | 22 | 0.13 | -1.03 | -100.0% | -98.3% | -36.0% | -0.76 | [-14.11, -11.66] |
+| C2 | bollinger_mr | 1861 | -100.0% | -12.91 | -100.0% | 22 | 0.13 | -1.03 | -100.0% | -98.3% | -35.8% | -0.76 | [-14.14, -11.68] |
 | C3 | intraday_momentum | 1821 | -99.7% | -26.87 | -99.7% | 5 | 0.02 | -0.65 | -100.0% | -81.3% | +3.6% | 0.26 | [-28.63, -25.32] |
 | C4 | orb | 1285 | -99.8% | -7.31 | -99.9% | 19 | 0.34 | -1.31 | -100.0% | -64.0% | +117.5% | 1.16 | [-8.63, -6.12] |
 | C5 | sweep_fvg | 10 | -2.9% | -0.72 | -3.5% | 30 | 0.27 | -0.75 | -5.3% | -0.8% | -0.2% | -0.07 | [-1.33, 0.12] |
@@ -19,7 +19,7 @@
 | Cand. | Strategy | Trades | Net (baseline) | Sharpe | Max DD | Win % | PF | Exp. R | Net (stress) | Net (optimistic) | Net (zero cost) | Sharpe (zero cost) | Bootstrap 90% CI (Sharpe) |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | C1 | donchian_trend | 284 | -59.3% | -2.31 | -59.7% | 15 | 0.58 | -0.57 | -88.4% | -7.3% | +38.2% | 1.03 | [-4.23, -0.80] |
-| C2 | bollinger_mr | 1217 | -100.0% | -22.31 | -100.0% | 15 | 0.11 | -1.61 | -100.0% | -82.8% | +36.5% | 1.48 | [-23.65, -21.01] |
+| C2 | bollinger_mr | 1218 | -100.0% | -22.31 | -100.0% | 15 | 0.11 | -1.60 | -100.0% | -82.7% | +37.2% | 1.50 | [-23.65, -21.01] |
 | C3 | intraday_momentum | 722 | -97.4% | -35.48 | -97.4% | 2 | 0.01 | -1.02 | -99.9% | -62.6% | +6.1% | 1.09 | [-38.86, -32.70] |
 | C4 | orb | 514 | -87.9% | -6.02 | -88.3% | 23 | 0.47 | -1.05 | -99.7% | +9.3% | +120.8% | 2.76 | [-7.84, -4.42] |
 | C5 | sweep_fvg | 12 | -3.3% | -1.04 | -3.3% | 25 | 0.34 | -0.71 | -6.8% | -0.2% | +0.5% | 0.20 | [-2.01, 0.04] |
@@ -48,13 +48,13 @@
 
 ## Test-period acceptance criteria
 
-| Cand. | min_30_trades | net_positive_and_sharpe_ge_0.5 | bootstrap_ci_lower_gt_0 | dsr_ge_0.90 | beats_95pct_random_controls | stress_sharpe_gt_0 | validation_sharpe_gt_0 | profit_factor_ge_1.10 | DSR | Control pct. | Verdict |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| C1 | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | 0.00 | +100.0% | **FAILED** |
-| C2 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 0.00 | +42.0% | **FAILED** |
-| C3 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 0.00 | +33.0% | **FAILED** |
-| C4 | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | 0.00 | +96.0% | **FAILED** |
-| C5 | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | 0.00 | +100.0% | **INSUFFICIENT EVIDENCE (too few trades)** |
+| Cand. | min_30_trades | net_positive_and_sharpe_ge_0.5 | bootstrap_ci_lower_gt_0 | dsr_ge_0.90 | beats_95pct_random_controls | stress_sharpe_gt_0 | validation_sharpe_gt_0 | profit_factor_ge_1.10 | DSR | DSR (null var., suppl.) | Control pct. | Trade-matched control pct. (suppl.) | Verdict |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| C1 | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | 0.00 | 0.00 | +100.0% | +41.0% | **FAILED** |
+| C2 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 0.00 | 0.00 | +42.0% | +0.0% | **FAILED** |
+| C3 | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 0.00 | 0.00 | +56.5% | +56.0% | **FAILED** |
+| C4 | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | 0.00 | 0.00 | +96.0% | +97.0% | **FAILED** |
+| C5 | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | 0.00 | 0.00 | +100.0% | +98.0% | **INSUFFICIENT EVIDENCE (too few trades)** |
 
 ## Break-even cost analysis (zero-cost runs)
 
@@ -63,18 +63,18 @@
 | C1 | dev | 664 | 50.3 | [13.1, 87.5] | ~86 (taker) |
 | C1 | val | 284 | 24.5 | [-18.8, 67.8] | ~86 (taker) |
 | C1 | test | 443 | 6.5 | [-17.7, 30.7] | ~86 (taker) |
-| C2 | dev | 2985 | -3.6 | [-7.7, 0.5] | ~86 (taker) |
-| C2 | val | 1225 | 3.2 | [-0.8, 7.2] | ~86 (taker) |
-| C2 | test | 1598 | -1.8 | [-4.9, 1.2] | ~86 (taker) |
+| C2 | dev | 2985 | -3.6 | [-7.7, 0.5] | ~70-86 (maker target / taker stop exits) |
+| C2 | val | 1226 | 3.3 | [-0.8, 7.3] | ~70-86 (maker target / taker stop exits) |
+| C2 | test | 1598 | -1.8 | [-4.9, 1.2] | ~70-86 (maker target / taker stop exits) |
 | C3 | dev | 1821 | 0.5 | [-2.2, 3.1] | ~86 (taker) |
 | C3 | val | 722 | 1.0 | [-1.4, 3.4] | ~86 (taker) |
 | C3 | test | 1018 | -0.7 | [-2.3, 0.9] | ~86 (taker) |
 | C4 | dev | 1297 | 9.6 | [0.4, 18.9] | ~86 (taker) |
 | C4 | val | 514 | 22.8 | [8.4, 37.2] | ~86 (taker) |
 | C4 | test | 726 | 5.8 | [-3.9, 15.4] | ~86 (taker) |
-| C5 | dev | 10 | -5.4 | [-83.6, 72.9] | ~86 (taker) |
-| C5 | val | 12 | 13.4 | [-60.8, 87.6] | ~86 (taker) |
-| C5 | test | 20 | 28.2 | [-20.1, 76.6] | ~86 (taker) |
+| C5 | dev | 10 | -5.4 | [-83.6, 72.9] | ~44-65 (maker entry; maker/taker exit) |
+| C5 | val | 12 | 13.4 | [-60.8, 87.6] | ~44-65 (maker entry; maker/taker exit) |
+| C5 | test | 20 | 28.2 | [-20.1, 76.6] | ~44-65 (maker entry; maker/taker exit) |
 
 ## Test-period regime breakdown
 
