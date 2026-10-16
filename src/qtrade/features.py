@@ -37,7 +37,8 @@ def true_range(bars: pd.DataFrame) -> pd.Series:
         [bars["high"] - bars["low"], (bars["high"] - prev_close).abs(), (bars["low"] - prev_close).abs()],
         axis=1,
     ).max(axis=1)
-    tr.iloc[0] = bars["high"].iloc[0] - bars["low"].iloc[0]
+    if len(tr):
+        tr.iloc[0] = bars["high"].iloc[0] - bars["low"].iloc[0]
     return tr
 
 

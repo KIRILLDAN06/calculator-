@@ -40,12 +40,14 @@ def max_drawdown_duration_days(equity: pd.Series) -> float:
     ts = equity.index
     longest = pd.Timedelta(0)
     start = None
+    prev_t = ts[0]
     for t, u in zip(ts, under.to_numpy(), strict=True):
         if u and start is None:
-            start = t
+            start = prev_t  # the peak is the last bar before going under water
         elif not u and start is not None:
             longest = max(longest, t - start)
             start = None
+        prev_t = t
     if start is not None:
         longest = max(longest, ts[-1] - start)
     return longest.total_seconds() / 86400.0

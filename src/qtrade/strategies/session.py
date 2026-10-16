@@ -284,14 +284,13 @@ class SweepFVG(Strategy):
 
             # ---------------- bearish side: sweep of highs ----------------
             if bool(p["allow_short"]):
-                if bear is None:
-                    if in_window:
-                        swept = [lvl for lvl in highs if high[t] > lvl]
-                        if swept:
-                            highs = [lvl for lvl in highs if lvl not in swept]
-                            bear = {"level": max(swept), "start": t, "ext": high[t], "phase": "sweep",
-                                    "swing": sl[t - 1] if t > 0 else np.nan}
-                            diag["sweeps"] += 1
+                if bear is None and in_window:
+                    swept = [lvl for lvl in highs if high[t] > lvl]
+                    if swept:
+                        highs = [lvl for lvl in highs if lvl not in swept]
+                        bear = {"level": max(swept), "start": t, "ext": high[t], "phase": "sweep",
+                                "swing": sl[t - 1] if t > 0 else np.nan}
+                        diag["sweeps"] += 1
                 if bear is not None:
                     bear["ext"] = max(bear["ext"], high[t])
                     if bear["phase"] == "sweep":
@@ -326,14 +325,13 @@ class SweepFVG(Strategy):
                 continue
 
             # ---------------- bullish side: sweep of lows ----------------
-            if bull is None:
-                if in_window:
-                    swept = [lvl for lvl in lows if low[t] < lvl]
-                    if swept:
-                        lows = [lvl for lvl in lows if lvl not in swept]
-                        bull = {"level": min(swept), "start": t, "ext": low[t], "phase": "sweep",
-                                "swing": sh[t - 1] if t > 0 else np.nan}
-                        diag["sweeps"] += 1
+            if bull is None and in_window:
+                swept = [lvl for lvl in lows if low[t] < lvl]
+                if swept:
+                    lows = [lvl for lvl in lows if lvl not in swept]
+                    bull = {"level": min(swept), "start": t, "ext": low[t], "phase": "sweep",
+                            "swing": sh[t - 1] if t > 0 else np.nan}
+                    diag["sweeps"] += 1
             if bull is not None:
                 bull["ext"] = min(bull["ext"], low[t])
                 if bull["phase"] == "sweep":

@@ -193,9 +193,23 @@ class PaperTrader:
             if remote is not None:
                 self.state["orders"][cid] = remote.to_dict()
 
+    def _is_own_order(self, client_id: str) -> bool:
+        if client_id in self.state["orders"]:
+            return True
+        parent, _, suffix = client_id.rpartition("-")
+        return suffix in ("SL", "TP") and parent in self.state["orders"]
+
     def _apply_fill(self, f: Any, rep: StepReport) -> None:
         pos = self.state["position"]
         ts = pd.Timestamp(f.ts)
+        if not self._is_own_order(f.client_id):
+            # Never adopt fills we did not originate: leave the books unchanged so the
+            # position reconciliation flags the discrepancy, and stop opening trades.
+            msg = f"fill for unknown order {f.client_id} ({f.side:+d} {f.qty})"
+            rep.alerts.append(msg)
+            self.alert("critical", msg, ts)
+            self.risk.halt(ts, "unexpected fill / unknown order")
+            return
         if f.liquidity == "taker" and f.ref_price and math.isfinite(f.ref_price) and f.ref_price > 0:
             self.risk.on_fill(ts, abs(f.price / f.ref_price - 1) * 1e4)
         if pos is None or pos["qty"] == 0:
@@ -248,11 +262,14 @@ class PaperTrader:
         remote = self.ex.position()
         ok = abs(internal - remote) <= 1e-8
         if not ok:
-            self.state["reconcile_ok"] = False
             msg = f"position mismatch: internal {internal} vs exchange {remote}"
             rep.alerts.append(msg)
-            self.alert("critical", msg)
-            self.risk.halt(pd.Timestamp.now(tz="UTC"), "reconciliation mismatch (unexpected position)")
+            if self.state["reconcile_ok"]:  # alert on the transition only, not every poll
+                self.alert("critical", msg)
+            self.state["reconcile_ok"] = False
+            self.risk.halt(pd.Timestamp(rep.now), "reconciliation mismatch (unexpected position)")
+        else:
+            self.state["reconcile_ok"] = True
         return ok
 
     def _submit_exit(self, reason: str, rep: StepReport, suffix: str = "X") -> None:

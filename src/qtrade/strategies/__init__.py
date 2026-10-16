@@ -5,7 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from qtrade.strategies.base import Strategy
-from qtrade.strategies.basic import BollingerMeanReversion, DonchianTrend, IntradayMomentum, NoTrade, RandomEntry
+from qtrade.strategies.basic import (
+    BollingerMeanReversion,
+    DonchianTrend,
+    IntradayMomentum,
+    NoTrade,
+    RandomEntry,
+)
 from qtrade.strategies.session import OpeningRangeBreakout, SweepFVG
 
 REGISTRY: dict[str, type[Strategy]] = {
